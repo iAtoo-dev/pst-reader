@@ -517,7 +517,7 @@ export function useMultiPSTWorker(authHeader?: string): PSTWorkerState & PSTWork
 
         // Send LOAD_URL to each worker
         const slot = makeSlot(pst.name, pst.size)
-        const url  = `/pst-files/${encodeURIComponent(pst.name)}`
+        const url  = `${location.origin}/pst-files/${encodeURIComponent(pst.name)}`
         worker.postMessage({
           type:       'LOAD_URL',
           url,
