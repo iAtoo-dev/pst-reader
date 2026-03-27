@@ -20,9 +20,10 @@ function ImportanceBadge({ importance }: { importance: number }) {
 
 function HighlightText({ text, query }: { text: string; query: string }) {
   if (!query.trim()) return <>{text}</>
-  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
-  const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  const re = new RegExp(`(${escaped.join('|')})`, 'gi')
+  // Highlight the exact phrase (not individual words) so "mot de passe" doesn't
+  // produce false highlights on every occurrence of "de"
+  const escaped = query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`(${escaped})`, 'gi')
   const parts = text.split(re)
   return (
     <>

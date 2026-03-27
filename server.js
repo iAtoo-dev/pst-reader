@@ -332,7 +332,14 @@ app.get('/api/search', (req, res) => {
     const ftsQuery = `"${q.replace(/"/g, '""')}"`
     let results, total
 
+    // LIKE phrase filter — guarantees the exact phrase appears in at least one field
+    const likeQ = `%${q}%`
+    const likeFilter = `(e.subject LIKE ? OR e.body_text LIKE ? OR e.sender_name LIKE ? OR e.recipients LIKE ?)`
+    const likeParams = [likeQ, likeQ, likeQ, likeQ]
+
     try {
+      // FTS5 pre-filters quickly by individual tokens (all must be present),
+      // then the LIKE clause ensures they appear as an exact consecutive phrase
       const baseSql = `
         SELECT e.id, e.folder_id, e.subject, e.sender_name, e.sender_email,
                e.recipients, e.date_sent, e.has_attachments, e.item_type,
@@ -341,6 +348,7 @@ app.get('/api/search', (req, res) => {
         JOIN emails e ON e.id = emails_fts.rowid
         JOIN folders f ON f.id = e.folder_id
         WHERE emails_fts MATCH ?
+          AND ${likeFilter}
         ${folderPath ? 'AND f.canonical_path = ?' : ''}
         ORDER BY rank
         LIMIT ? OFFSET ?
@@ -351,28 +359,28 @@ app.get('/api/search', (req, res) => {
         JOIN emails e ON e.id = emails_fts.rowid
         JOIN folders f ON f.id = e.folder_id
         WHERE emails_fts MATCH ?
+          AND ${likeFilter}
         ${folderPath ? 'AND f.canonical_path = ?' : ''}
       `
 
       const params = folderPath
-        ? [ftsQuery, folderPath, limit, offset]
-        : [ftsQuery, limit, offset]
+        ? [ftsQuery, ...likeParams, folderPath, limit, offset]
+        : [ftsQuery, ...likeParams, limit, offset]
       const countParams = folderPath
-        ? [ftsQuery, folderPath]
-        : [ftsQuery]
+        ? [ftsQuery, ...likeParams, folderPath]
+        : [ftsQuery, ...likeParams]
 
       results = db.prepare(baseSql).all(...params)
       total   = db.prepare(countSql).get(...countParams).n
     } catch (ftsErr) {
-      // FTS failed — fall back to LIKE search
-      const likeQ = `%${q}%`
+      // FTS5 failed — fall back to pure LIKE search (slower but always correct)
       const baseSql = `
         SELECT e.id, e.folder_id, e.subject, e.sender_name, e.sender_email,
                e.recipients, e.date_sent, e.has_attachments, e.item_type,
                f.canonical_path as folder_path
         FROM emails e
         JOIN folders f ON f.id = e.folder_id
-        WHERE (e.subject LIKE ? OR e.body_text LIKE ? OR e.sender_name LIKE ?)
+        WHERE ${likeFilter}
         ${folderPath ? 'AND f.canonical_path = ?' : ''}
         ORDER BY e.date_sent DESC NULLS LAST
         LIMIT ? OFFSET ?
@@ -381,15 +389,15 @@ app.get('/api/search', (req, res) => {
         SELECT COUNT(*) as n
         FROM emails e
         JOIN folders f ON f.id = e.folder_id
-        WHERE (e.subject LIKE ? OR e.body_text LIKE ? OR e.sender_name LIKE ?)
+        WHERE ${likeFilter}
         ${folderPath ? 'AND f.canonical_path = ?' : ''}
       `
       const params = folderPath
-        ? [likeQ, likeQ, likeQ, folderPath, limit, offset]
-        : [likeQ, likeQ, likeQ, limit, offset]
+        ? [...likeParams, folderPath, limit, offset]
+        : [...likeParams, limit, offset]
       const countParams = folderPath
-        ? [likeQ, likeQ, likeQ, folderPath]
-        : [likeQ, likeQ, likeQ]
+        ? [...likeParams, folderPath]
+        : [...likeParams]
 
       results = db.prepare(baseSql).all(...params)
       total   = db.prepare(countSql).get(...countParams).n
