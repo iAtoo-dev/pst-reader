@@ -183,6 +183,46 @@ function safeDate(d) {
   }
 }
 
+// ── RTF → plain text ──────────────────────────────────────────────────────────
+
+function stripRtf(rtf) {
+  if (!rtf || typeof rtf !== 'string') return ''
+  let text = rtf
+  text = text.replace(/\\'[0-9a-fA-F]{2}/g, ' ')       // hex-encoded chars \'e9
+  text = text.replace(/\\par\b/g, '\n')                  // paragraph → newline
+  text = text.replace(/\\tab\b/g, '\t')                  // tab
+  text = text.replace(/\\line\b/g, '\n')                 // line break
+  text = text.replace(/\\[a-zA-Z]+\*?-?[0-9]*/g, ' ')   // control words
+  text = text.replace(/\\\*/g, '')
+  text = text.replace(/\\[{}\\]/g, '')
+  text = text.replace(/[{}\\]/g, '')
+  text = text.replace(/[ \t]+/g, ' ')
+  text = text.replace(/\n[ \t]+/g, '\n')
+  text = text.replace(/\n{3,}/g, '\n\n')
+  return text.trim()
+}
+
+// ── Body extraction with RTF fallback ─────────────────────────────────────────
+// Priority: HTML (richest) → plain text → RTF stripped → empty
+
+function extractBodies(msg) {
+  let body_html = ''
+  let body_text = ''
+
+  try { body_html = msg.bodyHTML || '' } catch { /* skip */ }
+  try { body_text = msg.body      || '' } catch { /* skip */ }
+
+  // If neither HTML nor plain text, try RTF compressed body
+  if (!body_html && !body_text) {
+    try {
+      const rtf = msg.bodyRTF || ''
+      if (rtf) body_text = stripRtf(rtf)
+    } catch { /* skip */ }
+  }
+
+  return { body_html, body_text }
+}
+
 function detectItemType(messageClass) {
   if (!messageClass) return 'email'
   const mc = messageClass.toLowerCase()
@@ -339,8 +379,7 @@ function processFolder(folder, rawPath, pstSource, stats) {
           has_attachments: attCount > 0 ? 1 : 0,
           attachment_count: attCount,
           attachment_names: JSON.stringify(attNames),
-          body_text: msg.body || '',
-          body_html: msg.bodyHTML || '',
+          ...extractBodies(msg),
           importance: msg.importance ?? 1,
           is_read: msg.isRead ? 1 : 0,
           message_id: msg.internetMessageId || null,
