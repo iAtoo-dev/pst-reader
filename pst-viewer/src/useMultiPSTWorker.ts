@@ -160,6 +160,11 @@ export function useMultiPSTWorker(authHeader?: string): PSTWorkerState & PSTWork
   const [loadingPhase,        setLoadingPhase]        = useState<'copy' | 'parse' | null>(null)
   const [error,               setError]               = useState<string | null>(null)
   const [folderEmails,        setFolderEmails]        = useState<Map<string, EmailMeta[]>>(new Map())
+
+  // Keep a ref always pointing to the latest folderEmails so worker.onmessage
+  // closures (set up once in useEffect) can access current data without stale capture.
+  const folderEmailsRef = useRef<Map<string, EmailMeta[]>>(new Map())
+  folderEmailsRef.current = folderEmails
   const [bodyCache,           setBodyCache]           = useState<Map<string, { body: string; bodyHTML: string }>>(new Map())
   const [searchResults,       setSearchResults]       = useState<SearchResult[] | null>(null)
   const [searching,           setSearching]           = useState(false)
