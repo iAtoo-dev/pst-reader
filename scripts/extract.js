@@ -29,8 +29,8 @@ const {
   PSTAppointment,
   PSTTask,
   PSTContact,
-  PSTUtil,
 } = requireViewer('pst-extractor')
+const { PSTUtil } = requireViewer('pst-extractor/dist/PSTUtil.class')
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
