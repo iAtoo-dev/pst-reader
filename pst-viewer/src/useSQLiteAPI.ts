@@ -197,6 +197,11 @@ export function useSQLiteAPI(authHeader?: string): PSTWorkerState & PSTWorkerAct
         body: (email.body_text as string) || '',
         bodyHTML: (email.body_html as string) || '',
       }
+      console.debug('[fetchBody] id=%d body_text.length=%d body_html.length=%d',
+        emailIndex,
+        entry.body.length,
+        entry.bodyHTML.length,
+      )
 
       // Store attachment IDs for later use
       if (Array.isArray(email.attachments)) {

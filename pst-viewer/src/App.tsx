@@ -1428,17 +1428,23 @@ function App() {
                   </div>
                 )}
               </div>
-              <div className="flex-1 overflow-y-auto p-4 bg-white">
+              <div className="flex-1 relative bg-white min-h-0">
                 {selectedBody ? (
                   selectedBody.bodyHTML ? (
                     <iframe
                       srcDoc={selectedBody.bodyHTML}
-                      className="w-full h-full border-0"
+                      className="absolute inset-0 w-full h-full border-0"
                       sandbox="allow-same-origin"
                       title="Email content"
                     />
+                  ) : selectedBody.body ? (
+                    <div className="absolute inset-0 overflow-y-auto p-4">
+                      <pre className="whitespace-pre-wrap text-gray-700 font-sans text-sm">{selectedBody.body}</pre>
+                    </div>
                   ) : (
-                    <pre className="whitespace-pre-wrap text-gray-700 font-sans text-sm">{selectedBody.body}</pre>
+                    <div className="flex items-center justify-center h-full text-gray-400 text-sm">
+                      {t('noContent')}
+                    </div>
                   )
                 ) : (
                   <div className="flex items-center justify-center h-full text-gray-400">
