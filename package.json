@@ -1,13 +1,15 @@
 {
   "name": "pst-archive-server",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "description": "Server for browsing PST email archives",
   "scripts": {
     "start": "node server.js",
-    "build": "cd pst-viewer && npm install && npm run build"
+    "build": "cd pst-viewer && npm install && npm run build",
+    "extract": "node scripts/extract.js"
   },
   "dependencies": {
+    "better-sqlite3": "^9.4.3",
     "express": "^4.21.0"
   }
 }

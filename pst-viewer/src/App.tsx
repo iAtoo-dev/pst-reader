@@ -1,6 +1,6 @@
 import { Component, useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import type { ReactNode, ErrorInfo } from 'react'
-import { useMultiPSTWorker as usePSTWorker, bodyKey } from './useMultiPSTWorker.ts'
+import { useSQLiteAPI as usePSTWorker, bodyKey } from './useSQLiteAPI.ts'
 import { VirtualEmailList } from './VirtualEmailList.tsx'
 import type { FolderNode, EmailMeta, ExportOptions } from './types.ts'
 import { t, tr, currentLocale } from './i18n.ts'
