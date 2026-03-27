@@ -440,8 +440,8 @@ function InfoDialog({ onClose }: { onClose: () => void }) {
           <div className="flex items-center gap-3">
             <AppIcon className="w-8 h-8" />
             <div>
-              <h1 className="text-base font-bold text-gray-900 leading-tight">PST Titan</h1>
-              <p className="text-xs text-gray-400 leading-tight">&copy; {new Date().getFullYear()} MEUSE24</p>
+              <h1 className="text-base font-bold text-gray-900 leading-tight">PST Groupe Interaction</h1>
+              <p className="text-xs text-gray-400 leading-tight">&copy; {new Date().getFullYear()} iAtoo</p>
             </div>
           </div>
           <button
@@ -456,9 +456,7 @@ function InfoDialog({ onClose }: { onClose: () => void }) {
           <div className="text-center mb-6">
             <p className="text-sm text-gray-500">{t('infoSubtitle')}</p>
             <div className="flex items-center justify-center gap-3 mt-2">
-              <a href="https://meuse24.info" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">meuse24.info</a>
-              <span className="text-gray-300">|</span>
-              <a href="https://github.com/meuse24/pst-reader" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">GitHub</a>
+              <a href="https://github.com/iAtoo-dev/pst-reader" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">GitHub</a>
             </div>
             <p className="text-xs text-gray-400 mt-2">
               🌐 EN · DE · ES · FR · PT · IT · ZH · JA · RU · AR
@@ -985,10 +983,10 @@ function App() {
           <div className="text-center animate-[fadeIn_0.6s_ease-out] max-w-md w-full px-6">
             {/* Branding */}
             <div className="text-sm font-semibold tracking-[0.3em] uppercase text-blue-400/70 mb-3">
-              MEUSE24
+              iAtoo
             </div>
             <div className="text-6xl md:text-8xl font-black tracking-tight text-white mb-2 drop-shadow-lg">
-              PST <span className="text-blue-400">Titan</span>
+              PST <span className="text-blue-400">Groupe Interaction</span>
             </div>
             <div className="text-base text-blue-300/80 font-medium tracking-wide mb-10">
               Archive multi-PST
