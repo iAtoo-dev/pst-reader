@@ -765,13 +765,13 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const searchQueryRef = useRef(searchQuery)
   searchQueryRef.current = searchQuery
-  const [searchIncludeBody, setSearchIncludeBody] = useState(false)
+  const [searchIncludeBody, setSearchIncludeBody] = useState(true)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const loadingRef = useRef(pst.loading)
   loadingRef.current = pst.loading
 
-  const [exportOptions, setExportOptions] = useState<ExportOptions>({ includeHTML: true, includeTXT: true, includeAttachments: false })
+  const [exportOptions, setExportOptions] = useState<ExportOptions>({ includeHTML: true, includeTXT: true, includeAttachments: true })
   const [showHelp, setShowHelp] = useState(false)
   const [showInfo, setShowInfo] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(256)
@@ -1429,10 +1429,12 @@ function App() {
                 )}
               </div>
               <div className="flex-1 relative bg-white min-h-0">
-                {selectedBody ? (
-                  selectedBody.bodyHTML ? (
+                {selectedBody ? (() => {
+                  const htmlSrc = selectedBody.bodyHTML
+                    || (/<[a-zA-Z][\s\S]*>/.test(selectedBody.body) ? selectedBody.body : '')
+                  return htmlSrc ? (
                     <iframe
-                      srcDoc={selectedBody.bodyHTML}
+                      srcDoc={htmlSrc}
                       className="absolute inset-0 w-full h-full border-0"
                       sandbox="allow-same-origin"
                       title="Email content"
@@ -1446,7 +1448,7 @@ function App() {
                       {t('noContent')}
                     </div>
                   )
-                ) : (
+                })() : (
                   <div className="flex items-center justify-center h-full text-gray-400">
                     <svg className="inline-block w-4 h-4 mr-2 animate-spin" viewBox="0 0 24 24" fill="none">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
