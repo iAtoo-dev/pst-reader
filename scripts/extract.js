@@ -10,8 +10,7 @@
  */
 
 import { createRequire } from 'module'
-import { openSync, closeSync, readdirSync, statSync } from 'fs'
-import { readSync as fsReadSync } from 'fs'
+import { readdirSync, statSync } from 'fs'
 import { join, basename, resolve } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -195,21 +194,6 @@ function detectItemType(messageClass) {
 }
 
 // ── Monkey-patches ────────────────────────────────────────────────────────────
-
-let _activeFd = null
-
-const origReadSync = PSTFile.prototype.readSync
-PSTFile.prototype.readSync = function(buffer, start, length, position) {
-  if (_activeFd !== null) {
-    try {
-      fsReadSync(_activeFd, buffer, 0, length, position)
-      return
-    } catch (e) {
-      // fall through to original
-    }
-  }
-  return origReadSync.call(this, buffer, start, length, position)
-}
 
 // Patch PSTUtil.arraycopy for performance
 const origArraycopy = PSTUtil.arraycopy
@@ -468,28 +452,23 @@ async function main() {
 
     console.log(`\nProcessing: ${filename} (${pstSource})`)
 
-    let fd = null
+    let pstFile = null
     try {
-      fd = openSync(filePath, 'r')
-      _activeFd = fd
-
-      // Dummy buffer — readSync is monkey-patched to use fd
-      const pstFile = new PSTFile(Buffer.alloc(1))
+      // Pass file path directly — PSTFile opens its own fd and reads natively
+      pstFile = new PSTFile(filePath)
 
       const rootFolder = pstFile.getRootFolder()
       const subFolders = rootFolder.getSubFolders()
 
       for (const folder of subFolders) {
-        const folderName = folder.displayName || 'Root'
         processFolder(folder, '', pstSource, totalStats)
       }
 
     } catch (e) {
       console.error(`  Error processing ${filename}: ${e.message}`)
     } finally {
-      _activeFd = null
-      if (fd !== null) {
-        try { closeSync(fd) } catch { /* ignore */ }
+      if (pstFile !== null) {
+        try { pstFile.close() } catch { /* ignore */ }
       }
     }
   }
