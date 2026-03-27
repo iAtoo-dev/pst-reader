@@ -84,6 +84,19 @@ export type WorkerCommand =
   | { type: 'LOAD_BUFFER'; buffer: ArrayBuffer; fileName: string }
   | { type: 'LOAD_CACHED' }
   | { type: 'DELETE_CACHE' }
+  /**
+   * Load a PST file directly from the server via HTTP range requests.
+   * The worker never streams the full file — it fetches chunks on demand.
+   * Email metadata is indexed and persisted in IndexedDB (keyed by slot) so
+   * subsequent sessions load instantly without re-reading the PST file.
+   *
+   * @param url          Full URL of the PST file (served by the Express backend)
+   * @param fileName     Display name (e.g. "archive_2020.pst")
+   * @param fileSize     Size in bytes (from /api/pst-files)
+   * @param slot         Unique cache key for IDB/OPFS, derived from fileName+size
+   * @param authHeader   Optional "Authorization: Basic ..." header value
+   */
+  | { type: 'LOAD_URL'; url: string; fileName: string; fileSize: number; slot: string; authHeader?: string }
   | { type: 'FETCH_FOLDER'; path: string }
   | { type: 'FETCH_BODY'; folderPath: string; index: number }
   | { type: 'SEARCH'; query: string; folderPath: string; requestId: number; includeBody?: boolean }

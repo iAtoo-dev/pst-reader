@@ -59,6 +59,11 @@ let currentFileName = ''
 let currentFileSize = 0
 let loadOpId = 0 // operation counter for aborting stale loads
 
+// ─── URL-mode state (LOAD_URL) ────────────────────────────────────────────────
+let currentUrl = ''
+let currentAuthHeader = ''
+let currentSlot = '' // IDB cache key for this PST file
+
 const FIRST_PAGE_SIZE = 50
 const PAGE_SIZE = 200
 const PAGINATION_THRESHOLD = 500
@@ -248,6 +253,136 @@ function readChunk(chunkIndex: number): ArrayBuffer {
 function clearChunkCache() {
   chunkCache.clear()
   chunkLRU.length = 0
+}
+
+// ─── URL range-request chunk reader ──────────────────────────────────────────
+// Used by LOAD_URL mode: PST file is never copied locally — chunks are fetched
+// from the server on demand via synchronous XMLHttpRequest range requests.
+// Synchronous XHR is deprecated on the main thread but fully supported in workers.
+
+function readChunkFromURL(chunkIndex: number): ArrayBuffer {
+  const cached = chunkCache.get(chunkIndex)
+  if (cached) {
+    const i = chunkLRU.indexOf(chunkIndex)
+    if (i >= 0) chunkLRU.splice(i, 1)
+    chunkLRU.push(chunkIndex)
+    return cached
+  }
+
+  const start = chunkIndex * CHUNK_SIZE
+  const end   = Math.min(start + CHUNK_SIZE, currentFileSize) - 1
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const xhr = new (globalThis as any).XMLHttpRequest() as XMLHttpRequest
+  xhr.open('GET', currentUrl, false /* synchronous */)
+  xhr.setRequestHeader('Range', `bytes=${start}-${end}`)
+  if (currentAuthHeader) xhr.setRequestHeader('Authorization', currentAuthHeader)
+  xhr.responseType = 'arraybuffer'
+  xhr.send()
+
+  if (xhr.status !== 206 && xhr.status !== 200) {
+    throw new Error(`Range request failed (HTTP ${xhr.status}) for ${currentUrl} bytes=${start}-${end}`)
+  }
+
+  const ab = xhr.response as ArrayBuffer
+
+  while (chunkCache.size >= MAX_CHUNKS) {
+    const oldest = chunkLRU.shift()!
+    chunkCache.delete(oldest)
+  }
+  chunkCache.set(chunkIndex, ab)
+  chunkLRU.push(chunkIndex)
+  return ab
+}
+
+function patchReadSyncURL() {
+  pstProto.readSync = function (buffer: Buffer, length: number, position: number): number {
+    const dest = new Uint8Array(buffer.buffer as ArrayBuffer, buffer.byteOffset, length)
+    let bytesRead = 0
+    while (bytesRead < length) {
+      const absPos     = position + bytesRead
+      const chunkIndex = Math.floor(absPos / CHUNK_SIZE)
+      const chunkData  = readChunkFromURL(chunkIndex)
+      const offsetInChunk = absPos - chunkIndex * CHUNK_SIZE
+      const available  = chunkData.byteLength - offsetInChunk
+      const toCopy     = Math.min(available, length - bytesRead)
+      dest.set(new Uint8Array(chunkData, offsetInChunk, toCopy), bytesRead)
+      bytesRead += toCopy
+    }
+    if (parseProgressEnabled) {
+      parseBytesRead += bytesRead
+      reportParseProgress()
+    }
+    return bytesRead
+  }
+}
+
+// ─── Persistent email-metadata cache (IndexedDB) ──────────────────────────────
+// Since PST files on the server never change, we persist the email-metadata
+// index in IDB keyed by slot = filename+filesize. Subsequent sessions load
+// metadata instantly from IDB; the PST file is only read for email bodies,
+// attachments and exports.
+
+const CACHE_DB_NAME    = 'pst-viewer-email-cache'
+const CACHE_DB_VERSION = 1
+const CACHE_STORE      = 'data'
+
+function openCacheDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(CACHE_DB_NAME, CACHE_DB_VERSION)
+    req.onupgradeneeded = () => { req.result.createObjectStore(CACHE_STORE) }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror   = () => reject(req.error)
+  })
+}
+
+async function idbCacheGet<T>(key: string): Promise<T | undefined> {
+  const db  = await openCacheDB()
+  const tx  = db.transaction(CACHE_STORE, 'readonly')
+  const req = tx.objectStore(CACHE_STORE).get(key)
+  return new Promise<T | undefined>((resolve, reject) => {
+    req.onsuccess = () => { db.close(); resolve(req.result as T) }
+    req.onerror   = () => { db.close(); reject(req.error) }
+  })
+}
+
+async function idbCachePut(key: string, value: unknown): Promise<void> {
+  const db = await openCacheDB()
+  const tx = db.transaction(CACHE_STORE, 'readwrite')
+  tx.objectStore(CACHE_STORE).put(value, key)
+  return new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => { db.close(); resolve() }
+    tx.onerror    = () => { db.close(); reject(tx.error) }
+  })
+}
+
+/** Save all email metadata for one folder to IDB (fire-and-forget safe). */
+async function saveFolderEmailsToIDB(slot: string, folderPath: string, emails: EmailMeta[]): Promise<void> {
+  try {
+    await idbCachePut(`${slot}/f/${folderPath}`, emails)
+  } catch { /* non-critical — IDB may be full */ }
+}
+
+/** Load email metadata for one folder from IDB. Returns null if not cached. */
+async function loadFolderEmailsFromIDB(slot: string, folderPath: string): Promise<EmailMeta[] | null> {
+  try {
+    const data = await idbCacheGet<EmailMeta[]>(`${slot}/f/${folderPath}`)
+    return data ?? null
+  } catch { return null }
+}
+
+/** Persist the set of fully-indexed folder paths. */
+async function saveCompletedFoldersToIDB(slot: string, paths: string[]): Promise<void> {
+  try {
+    await idbCachePut(`${slot}/completed`, paths)
+  } catch { /* non-critical */ }
+}
+
+/** Load the set of fully-indexed folder paths from IDB. */
+async function loadCompletedFoldersFromIDB(slot: string): Promise<string[]> {
+  try {
+    return (await idbCacheGet<string[]>(`${slot}/completed`)) ?? []
+  } catch { return [] }
 }
 
 function patchReadSyncFile() {
@@ -509,6 +644,9 @@ function resetState() {
   clearChunkCache()
   currentFileName = ''
   currentFileSize = 0
+  currentUrl = ''
+  currentAuthHeader = ''
+  currentSlot = ''
   opfsMode = false
   folderCache.clear()
   emailCache.clear()
@@ -1231,6 +1369,14 @@ self.onmessage = async (e: MessageEvent<WorkerCommand>) => {
             emailCache.set(path, emails)
             completedFolders.add(path)
             totalCachedEmails += emails.length
+            // Persist to IDB so next session loads instantly (fire-and-forget)
+            if (currentSlot) {
+              saveFolderEmailsToIDB(currentSlot, path, emails).catch(() => {})
+              // Update completed list every 5 folders to reduce write frequency
+              if (indexed % 5 === 0) {
+                saveCompletedFoldersToIDB(currentSlot, [...completedFolders]).catch(() => {})
+              }
+            }
           } catch {
             // Skip broken folder — don't let it kill the entire indexing run
           }
@@ -1240,6 +1386,10 @@ self.onmessage = async (e: MessageEvent<WorkerCommand>) => {
 
         if (indexOpId === myOpId) {
           post({ type: 'INDEX_PROGRESS', indexed, totalFolders, done: true })
+          // Final flush of completed list to IDB
+          if (currentSlot) {
+            saveCompletedFoldersToIDB(currentSlot, [...completedFolders]).catch(() => {})
+          }
         }
         break
       }
@@ -1254,29 +1404,154 @@ self.onmessage = async (e: MessageEvent<WorkerCommand>) => {
         break
       }
 
+      // ── LOAD_URL: load PST from the local server via HTTP range requests ─────
+      // On first open: parse the PST folder tree (sequential range reads, fast)
+      //   then background-index all folders and persist metadata in IndexedDB.
+      // On subsequent opens: load the completed index from IndexedDB instantly;
+      //   the PST file is only accessed for email bodies, attachments, exports.
+      case 'LOAD_URL': {
+        const myOpId = ++loadOpId
+        await closeSyncHandle()
+        resetState()
+
+        const { url, fileName, fileSize, slot, authHeader } = cmd
+        currentUrl        = url
+        currentAuthHeader = authHeader ?? ''
+        currentSlot       = slot
+        currentFileName   = fileName
+        currentFileSize   = fileSize
+
+        // Patch readSync to fetch chunks via synchronous XHR range requests
+        patchReadSyncURL()
+        clearChunkCache()
+        opfsMode = true // skip body snippets during metadata extraction (I/O heavy)
+
+        // ── Try to restore from IDB ─────────────────────────────────────────
+        const completedPaths = await loadCompletedFoldersFromIDB(slot)
+        if (loadOpId !== myOpId) return
+
+        if (completedPaths.length > 0) {
+          // We have a persisted index. Parse the folder tree from the PST to
+          // rebuild folderCache (needed for body/attachment reads later), then
+          // load email metadata from IDB. Parsing the folder structure only
+          // reads the PST B-tree nodes — much less I/O than full indexing.
+          post({ type: 'PROGRESS', message: `Loading ${fileName} (restoring index…)`, phase: 'parse' })
+          try {
+            pstFile = new PSTFile(Buffer.alloc(1))
+            const tree = buildFolderTree(pstFile.getRootFolder())
+            if (loadOpId !== myOpId) return
+
+            // Restore completed-folder set so INDEX_ALL skips them
+            for (const p of completedPaths) completedFolders.add(p)
+
+            // Pre-load email metadata from IDB into the in-memory emailCache
+            // for all completed folders (prioritise Inbox/Sent first).
+            const sorted = completedPaths.slice().sort((a, b) => getFolderPriority(a) - getFolderPriority(b))
+            for (const path of sorted) {
+              if (loadOpId !== myOpId) break
+              const emails = await loadFolderEmailsFromIDB(slot, path)
+              if (emails && totalCachedEmails + emails.length <= EMAIL_CACHE_MAX_EMAILS) {
+                emailCache.set(path, emails)
+                totalCachedEmails += emails.length
+              }
+            }
+
+            post({ type: 'READY', tree, fileName, fileSize, savedAt: 0 })
+          } catch (err) {
+            // Corrupted PST or network error — fall through to fresh parse
+            post({ type: 'PROGRESS', message: `Re-parsing ${fileName}…`, phase: 'parse' })
+            resetState()
+            currentUrl        = url
+            currentAuthHeader = authHeader ?? ''
+            currentSlot       = slot
+            currentFileName   = fileName
+            currentFileSize   = fileSize
+            patchReadSyncURL()
+            opfsMode = true
+            try {
+              pstFile = new PSTFile(Buffer.alloc(1))
+              const tree = buildFolderTree(pstFile.getRootFolder())
+              if (loadOpId !== myOpId) return
+              post({ type: 'READY', tree, fileName, fileSize, savedAt: 0 })
+            } catch (err2) {
+              post({ type: 'ERROR', message: `Cannot parse ${fileName}: ${err2 instanceof Error ? err2.message : String(err2)}` })
+              return
+            }
+          }
+          break
+        }
+
+        // ── First open: parse PST folder tree (no IDB cache yet) ──────────
+        post({ type: 'PROGRESS', message: `Parsing ${fileName}…`, phase: 'parse' })
+        try {
+          pstFile = new PSTFile(Buffer.alloc(1))
+          const tree = buildFolderTree(pstFile.getRootFolder())
+          if (loadOpId !== myOpId) return
+          post({ type: 'READY', tree, fileName, fileSize, savedAt: 0 })
+        } catch (err) {
+          post({ type: 'ERROR', message: `Cannot parse ${fileName}: ${err instanceof Error ? err.message : String(err)}` })
+        }
+        break
+      }
+
       case 'FETCH_FOLDER': {
         // Every FETCH_FOLDER gets a unique opId — cancels any in-progress load
         const myFolderOpId = ++folderLoadOpId
+        // Capture narrowed path before any async yields (TypeScript narrowing)
+        const fetchPath = cmd.path
 
-        // Check if fully cached
-        if (completedFolders.has(cmd.path)) {
-          const cached = emailCache.get(cmd.path)!
-          // Paginate cache hits to avoid large structured-clone spikes
-          for (let page = 0; page * PAGE_SIZE < cached.length; page++) {
-            const slice = cached.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
-            post({ type: 'FOLDER_EMAILS', path: cmd.path, emails: slice, searchableFolderCount: emailCache.size, totalCount: cached.length, page })
-            if (cached.length > PAGE_SIZE && page * PAGE_SIZE + PAGE_SIZE < cached.length) {
+        // Helper: send cached emails in pages and signal DONE
+        async function sendCachedFolder(emails: EmailMeta[]) {
+          for (let page = 0; page * PAGE_SIZE < emails.length; page++) {
+            const slice = emails.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+            post({ type: 'FOLDER_EMAILS', path: fetchPath, emails: slice, searchableFolderCount: emailCache.size, totalCount: emails.length, page })
+            if (emails.length > PAGE_SIZE && page * PAGE_SIZE + PAGE_SIZE < emails.length) {
               await yieldToMessageLoop()
-              if (folderLoadOpId !== myFolderOpId) return
+              if (folderLoadOpId !== myFolderOpId) return false // cancelled
             }
           }
-          post({ type: 'FOLDER_DONE', path: cmd.path, totalCount: cached.length })
-          return
+          post({ type: 'FOLDER_DONE', path: fetchPath, totalCount: emails.length })
+          return true
         }
 
-        const folder = folderCache.get(cmd.path)
+        // 1. In-memory cache hit (fastest path)
+        if (completedFolders.has(fetchPath)) {
+          let cached = emailCache.get(fetchPath)
+          if (!cached && currentSlot) {
+            // In-memory evicted but IDB should have it
+            cached = (await loadFolderEmailsFromIDB(currentSlot, fetchPath)) ?? undefined
+            if (cached) {
+              if (totalCachedEmails + cached.length <= EMAIL_CACHE_MAX_EMAILS) {
+                emailCache.set(fetchPath, cached)
+                totalCachedEmails += cached.length
+              }
+            }
+          }
+          if (cached) {
+            await sendCachedFolder(cached)
+            return
+          }
+          // completedFolders set was inconsistent — fall through to re-read
+        }
+
+        // 2. IDB cache hit (PST file not needed for metadata)
+        if (currentSlot) {
+          const idbEmails = await loadFolderEmailsFromIDB(currentSlot, fetchPath)
+          if (idbEmails) {
+            if (loadOpId !== myFolderOpId && folderLoadOpId !== myFolderOpId) return // cancelled
+            completedFolders.add(fetchPath)
+            if (totalCachedEmails + idbEmails.length <= EMAIL_CACHE_MAX_EMAILS) {
+              emailCache.set(fetchPath, idbEmails)
+              totalCachedEmails += idbEmails.length
+            }
+            await sendCachedFolder(idbEmails)
+            return
+          }
+        }
+
+        const folder = folderCache.get(fetchPath)
         if (!folder) {
-          post({ type: 'ERROR', message: `Ordner nicht gefunden: ${cmd.path}` })
+          post({ type: 'ERROR', message: `Ordner nicht gefunden: ${fetchPath}` })
           return
         }
 
@@ -1291,7 +1566,7 @@ self.onmessage = async (e: MessageEvent<WorkerCommand>) => {
             let idx = 0
             while (email != null) {
               try {
-                emails.push(extractEmailMeta(email, idx, cmd.path))
+                emails.push(extractEmailMeta(email, idx, fetchPath))
               } catch { /* skip broken email */ }
               email = folder.getNextChild()
               idx++
@@ -1305,17 +1580,22 @@ self.onmessage = async (e: MessageEvent<WorkerCommand>) => {
           }
 
           if (totalCachedEmails + emails.length > EMAIL_CACHE_MAX_EMAILS) evictEmailCache(emails.length)
-          emailCache.set(cmd.path, emails)
-          completedFolders.add(cmd.path)
+          emailCache.set(fetchPath, emails)
+          completedFolders.add(fetchPath)
           totalCachedEmails += emails.length
-          post({ type: 'FOLDER_EMAILS', path: cmd.path, emails, searchableFolderCount: emailCache.size, totalCount: emails.length, page: 0 })
-          post({ type: 'FOLDER_DONE', path: cmd.path, totalCount: emails.length })
+          post({ type: 'FOLDER_EMAILS', path: fetchPath, emails, searchableFolderCount: emailCache.size, totalCount: emails.length, page: 0 })
+          post({ type: 'FOLDER_DONE', path: fetchPath, totalCount: emails.length })
+          // Persist to IDB (fire-and-forget, non-blocking)
+          if (currentSlot) {
+            saveFolderEmailsToIDB(currentSlot, fetchPath, emails).catch(() => {})
+            saveCompletedFoldersToIDB(currentSlot, [...completedFolders]).catch(() => {})
+          }
           return
         }
 
         // Large folder: paginated loading
         // Discard partial cache from a previously cancelled load of this folder
-        emailCache.delete(cmd.path)
+        emailCache.delete(fetchPath)
 
         const emails: EmailMeta[] = []
         let pageStart = 0
@@ -1328,14 +1608,14 @@ self.onmessage = async (e: MessageEvent<WorkerCommand>) => {
 
           while (email != null) {
             try {
-              emails.push(extractEmailMeta(email, idx, cmd.path))
+              emails.push(extractEmailMeta(email, idx, fetchPath))
             } catch { /* skip broken email */ }
             idx++
 
             // Determine page boundary: first page is smaller for fast initial display
             const currentPageSize = page === 0 ? FIRST_PAGE_SIZE : PAGE_SIZE
             if (emails.length - pageStart >= currentPageSize) {
-              post({ type: 'FOLDER_EMAILS', path: cmd.path, emails: emails.slice(pageStart, pageStart + currentPageSize), searchableFolderCount: emailCache.size, totalCount, page })
+              post({ type: 'FOLDER_EMAILS', path: fetchPath, emails: emails.slice(pageStart, pageStart + currentPageSize), searchableFolderCount: emailCache.size, totalCount, page })
               pageStart += currentPageSize
               page++
 
@@ -1349,7 +1629,7 @@ self.onmessage = async (e: MessageEvent<WorkerCommand>) => {
 
           // Send remaining emails (partial last page)
           if (emails.length > pageStart) {
-            post({ type: 'FOLDER_EMAILS', path: cmd.path, emails: emails.slice(pageStart), searchableFolderCount: emailCache.size, totalCount, page })
+            post({ type: 'FOLDER_EMAILS', path: fetchPath, emails: emails.slice(pageStart), searchableFolderCount: emailCache.size, totalCount, page })
           }
         } catch (err) {
           if (emails.length === 0) {
@@ -1362,10 +1642,15 @@ self.onmessage = async (e: MessageEvent<WorkerCommand>) => {
         // Only mark complete + send DONE if not cancelled
         if (folderLoadOpId !== myFolderOpId) return
         if (totalCachedEmails + emails.length > EMAIL_CACHE_MAX_EMAILS) evictEmailCache(emails.length)
-        emailCache.set(cmd.path, emails)
-        completedFolders.add(cmd.path)
+        emailCache.set(fetchPath, emails)
+        completedFolders.add(fetchPath)
         totalCachedEmails += emails.length
-        post({ type: 'FOLDER_DONE', path: cmd.path, totalCount: emails.length })
+        post({ type: 'FOLDER_DONE', path: fetchPath, totalCount: emails.length })
+        // Persist to IDB (fire-and-forget)
+        if (currentSlot) {
+          saveFolderEmailsToIDB(currentSlot, fetchPath, emails).catch(() => {})
+          saveCompletedFoldersToIDB(currentSlot, [...completedFolders]).catch(() => {})
+        }
         break
       }
 

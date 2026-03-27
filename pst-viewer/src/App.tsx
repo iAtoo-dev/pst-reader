@@ -1,6 +1,6 @@
 import { Component, useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import type { ReactNode, ErrorInfo } from 'react'
-import { usePSTWorker, bodyKey } from './usePSTWorker.ts'
+import { useMultiPSTWorker as usePSTWorker, bodyKey } from './useMultiPSTWorker.ts'
 import { VirtualEmailList } from './VirtualEmailList.tsx'
 import type { FolderNode, EmailMeta, ExportOptions } from './types.ts'
 import { t, tr, currentLocale } from './i18n.ts'
@@ -923,24 +923,10 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const handleClose = useCallback(() => {
-    abortSearch()
-    setSelectedEmail(null)
-    setSelectedFolderPath(null)
-    setSearchQuery('')
-    pst.closeFile()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault()
-      if (loadingRef.current) return
-      const file = e.dataTransfer.files[0]
-      if (file) handleFile(file)
-    },
-    [handleFile]
-  )
+  // handleClose and handleDrop are not used in server mode (no file upload)
+  // kept as no-ops to avoid regressions if single-file mode is re-enabled
+  const _handleClose = useCallback(() => {}, [])
+  void _handleClose // suppress unused warning
 
   const handleEmailSelect = useCallback((email: EmailMeta) => {
     setSelectedEmail(email)
@@ -954,9 +940,9 @@ function App() {
         searchInputRef.current?.focus()
         searchInputRef.current?.select()
       }
+      // Ctrl+O disabled in server mode (no file upload)
       if ((e.ctrlKey || e.metaKey) && e.key === 'o') {
         e.preventDefault()
-        if (!loadingRef.current) fileInputRef.current?.click()
       }
       if (e.key === 'Escape' && isSearching) {
         abortSearch()
@@ -991,105 +977,73 @@ function App() {
 
   const ctrl = t('ctrlKey')
 
-  // ── Landing page ─────────────────────────────────────────────────────────────
+  // ── Loading / error screen (shown while PST files are being parsed) ──────────
   if (!pst.tree) {
     return (
-      <div
-        className="flex flex-col min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={handleDrop}
-      >
+      <div className="flex flex-col min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900">
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-center animate-[fadeIn_0.6s_ease-out]">
+          <div className="text-center animate-[fadeIn_0.6s_ease-out] max-w-md w-full px-6">
             {/* Branding */}
-            <div className="text-sm md:text-base font-semibold tracking-[0.3em] uppercase text-blue-400/70 mb-3">
+            <div className="text-sm font-semibold tracking-[0.3em] uppercase text-blue-400/70 mb-3">
               MEUSE24
             </div>
             <div className="text-6xl md:text-8xl font-black tracking-tight text-white mb-2 drop-shadow-lg">
               PST <span className="text-blue-400">Titan</span>
             </div>
-            <div className="text-lg md:text-xl text-blue-300/80 font-medium tracking-wide mb-10">
-              {t('tagline')}
+            <div className="text-base text-blue-300/80 font-medium tracking-wide mb-10">
+              Archive multi-PST
             </div>
 
-            {/* Loading indicator (cached file) */}
+            {/* Loading state */}
             {pst.loading && (
-              <div className="mb-6 max-w-sm mx-auto">
-                <div className="text-blue-300 font-medium mb-3 flex items-center justify-center">
-                  <svg className="w-4 h-4 mr-2 animate-spin" viewBox="0 0 24 24" fill="none">
+              <div className="mb-6">
+                <div className="text-blue-300 font-medium mb-3 flex items-center justify-center gap-2">
+                  <svg className="w-4 h-4 animate-spin flex-shrink-0" viewBox="0 0 24 24" fill="none">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
-                  {pst.loadingMsg}
+                  <span className="text-sm">{pst.loadingMsg}</span>
                 </div>
-                {pst.loadingPhase === 'copy' && (
-                  <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
+                {/* Indeterminate progress bar during parse */}
+                <div className="w-full bg-slate-700 rounded-full h-1.5 overflow-hidden">
+                  {pst.loadingPhase === 'copy' ? (
                     <div
-                      className="bg-blue-400 h-2 rounded-full transition-all duration-300"
+                      className="bg-blue-400 h-1.5 rounded-full transition-all duration-300"
                       style={{ width: `${pst.progress}%` }}
                     />
-                  </div>
-                )}
-                {pst.loadingPhase === 'parse' && (
-                  <div className="w-full bg-slate-700 rounded-full h-2 overflow-hidden">
-                    <div
-                      className="bg-blue-400 h-2 rounded-full animate-[indeterminate_1.5s_ease-in-out_infinite]"
-                      style={{ width: '30%' }}
-                    />
-                  </div>
-                )}
-                {pst.loadingPhase && (
-                  <button
-                    className="mt-3 px-4 py-1.5 text-sm text-slate-300 bg-slate-700/60 rounded hover:bg-slate-600 transition"
-                    onClick={pst.abortLoad}
-                  >
-                    {t('cancel')}
-                  </button>
-                )}
+                  ) : (
+                    <div className="bg-blue-400 h-1.5 rounded-full animate-[indeterminate_1.5s_ease-in-out_infinite]" style={{ width: '30%' }} />
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 mt-3">
+                  Première ouverture : lecture des fichiers PST via le réseau.<br />
+                  Les ouvertures suivantes chargent depuis le cache (instantané).
+                </p>
               </div>
             )}
 
+            {/* Error state */}
             {pst.error && (
-              <div className="mb-6 text-red-300 bg-red-900/30 p-3 rounded max-w-sm mx-auto">{pst.error}</div>
+              <div className="mb-6 text-red-300 bg-red-900/30 border border-red-700/40 p-4 rounded-lg text-sm text-left">
+                <div className="font-semibold mb-1">Erreur de connexion</div>
+                <div className="font-mono text-xs break-all">{pst.error}</div>
+                <button
+                  className="mt-3 px-4 py-1.5 text-sm bg-red-700/50 text-red-200 rounded hover:bg-red-700 transition"
+                  onClick={() => window.location.reload()}
+                >
+                  Réessayer
+                </button>
+              </div>
             )}
 
-            {/* File picker — only when not loading */}
-            {!pst.loading && (
-              <div className="mt-2">
-                <label className="inline-block px-8 py-3 rounded-lg bg-blue-600 text-white font-medium cursor-pointer hover:bg-blue-500 transition shadow-lg shadow-blue-600/30">
-                  {t('openFile')}
-                  <input
-                    type="file"
-                    accept=".pst,.ost"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0]
-                      if (file) handleFile(file)
-                    }}
-                  />
-                </label>
-                <p className="text-sm text-slate-500 mt-4">
-                  {t('dropHint')}
-                </p>
-                <p className="text-xs text-slate-600 mt-2">
-                  {t('privacyHint')}
-                </p>
+            {/* Stalled (no error, no loading) */}
+            {!pst.loading && !pst.error && (
+              <div className="text-slate-400 text-sm">
+                Aucun fichier PST disponible sur le serveur.
               </div>
             )}
           </div>
         </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".pst,.ost"
-          className="hidden"
-          disabled={pst.loading}
-          onChange={(e) => {
-            const file = e.target.files?.[0]
-            if (file) handleFile(file)
-            e.target.value = ''
-          }}
-        />
         {showHelp && <HelpDialog onClose={() => setShowHelp(false)} />}
         {showInfo && <InfoDialog onClose={() => setShowInfo(false)} />}
       </div>
@@ -1103,8 +1057,8 @@ function App() {
         fileName={pst.fileName}
         fileSize={pst.fileSize}
         savedAt={pst.savedAt}
-        onOpenFile={handleFile}
-        onCloseFile={handleClose}
+        onOpenFile={() => {}}
+        onCloseFile={() => {}}
         onShowHelp={() => setShowHelp(true)}
         onShowInfo={() => setShowInfo(true)}
         sidebarVisible={sidebarVisible}

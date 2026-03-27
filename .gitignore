@@ -21,3 +21,6 @@ review.md
 
 # Claude Code
 .claude/
+
+# Environment
+.env

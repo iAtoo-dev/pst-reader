@@ -1,158 +1,102 @@
-# PST Viewer
+# PST Archive — Serveur d'archives email
 
-Browser-basierter Outlook PST/OST-Datei-Viewer. Laeuft vollstaendig lokal im Browser als einzelne HTML-Datei — kein Server, kein Upload, alle Daten bleiben auf dem Rechner.
+Fork de [meuse24/pst-reader](https://github.com/meuse24/pst-reader) adapté pour servir plusieurs fichiers PST volumineux depuis un serveur, sans upload.
 
-## Features
+## Cas d'usage
 
-- **PST- und OST-Dateien oeffnen** per Drag & Drop oder Dateiauswahl — auch Dateien >20 GB
-- **Ordnerstruktur** navigieren (Posteingang, Gesendete Elemente, etc.)
-- **E-Mails lesen** mit HTML- und Text-Ansicht, ungelesene Mails hervorgehoben
-- **Anhaenge** anzeigen und herunterladen
-- **Termine, Aufgaben & Kontakte** werden automatisch erkannt und typ-spezifisch dargestellt
-- **Volltextsuche** mit Hintergrund-Indizierung — Header-Suche laeuft quasi-instant nach Indizierung
-- **EML-Export** — Suchergebnisse oder ganze Ordner als ZIP mit EML-Dateien (RFC-konform)
-- **E-Mail teilen** per Web Share API oder EML-Download
-- **OPFS-Cache** — grosse Dateien werden im Browser-Cache gespeichert (kein erneutes Laden)
-- **Hilfe & Info** — Tastenkuerzel, Browser-Kompatibilitaet, Lizenzen (F1)
+Vous avez plusieurs fichiers PST (sauvegardes d'une même boîte mail) stockés sur un serveur Ubuntu et souhaitez permettre à un collaborateur de les parcourir, rechercher et exporter depuis un navigateur web — sans jamais copier les fichiers.
 
-## Demo
+## Fonctionnalités
 
-Die fertige Anwendung ist eine einzelne HTML-Datei (`pst-viewer.html`). Im Browser oeffnen — fertig.
+- **Multi-PST** : charge plusieurs fichiers PST simultanément (un Web Worker par fichier)
+- **Boîte fusionnée** : les dossiers identiques sont fusionnés (ex. tous les "Inbox" en un seul), emails triés par date
+- **Accès HTTP range** : les fichiers PST ne sont jamais copiés — seuls les chunks nécessaires sont lus à la demande via des requêtes HTTP range
+- **Persistance IndexedDB** : les métadonnées sont indexées une seule fois et stockées dans le navigateur ; les sessions suivantes sont instantanées
+- **Authentification** : HTTP Basic Auth avec mot de passe configurable
+- **Export EML** : export des emails en fichiers `.eml` ou ZIP
+- **Recherche** : recherche plein texte (objet, expéditeur, destinataire, corps, pièces jointes)
 
-> **Tipp fuer Dateien >1 GB:** Die App ueber einen lokalen HTTP-Server oeffnen (z.B. `npx serve .`) statt direkt per `file://`. Das aktiviert OPFS und reduziert den Speicherbedarf erheblich.
+## Architecture
 
-## Schnellstart
+```
+server.js                          # Backend Express (Basic Auth, range requests, /api/pst-files)
+pst-viewer/src/
+  useMultiPSTWorker.ts             # Hook React multi-PST (remplace usePSTWorker)
+  pstWorker.ts                     # Worker : LOAD_URL + persistance IndexedDB
+  types.ts                         # Types partagés (+ commande LOAD_URL)
+  App.tsx                          # UI (sans upload, mode serveur)
+```
 
-### Fertige Datei verwenden
+### Première ouverture
 
-1. `pst-viewer.html` herunterladen
-2. Im Browser oeffnen — Chrome/Edge empfohlen
-3. PST/OST-Datei per Drag & Drop oder ueber **Datei > PST-Datei oeffnen** laden
+1. Le serveur liste les fichiers PST via `/api/pst-files`
+2. Un Web Worker par fichier PST charge la structure via des requêtes HTTP range synchrones
+3. Les métadonnées de chaque email sont indexées et persistées en IndexedDB (`pst-viewer-email-cache`, clé `filename:filesize`)
+4. Durée : quelques secondes à quelques minutes selon la taille des PST
 
-### Selbst bauen
+### Ouvertures suivantes
+
+- Les métadonnées sont rechargées depuis IndexedDB **instantanément** (< 5 secondes)
+- Les fichiers PST ne sont accédés que pour les corps d'emails et les pièces jointes
+
+## Installation
+
+### Prérequis
+
+- Node.js 20+ (`nvm install 20`)
+- Fichiers PST accessibles sur le serveur
+
+### Étapes
 
 ```bash
+# 1. Cloner le projet
+git clone https://github.com/iAtoo-dev/pst-reader pst-archive
+cd pst-archive
+
+# 2. Installer les dépendances du serveur
+npm install
+
+# 3. Construire le frontend
 cd pst-viewer
 npm install
 npm run build
+cd ..
 ```
 
-Die Build-Ausgabe (`dist/index.html`) wird automatisch als `pst-viewer.html` ins Projekt-Root kopiert.
+### Configuration
 
-## Tech Stack
-
-| Bereich | Technologie |
-|---|---|
-| UI | React 19 + TypeScript 5.9 (strict) |
-| Styling | Tailwind CSS 4 |
-| Build | Vite 7 + vite-plugin-singlefile |
-| PST-Parsing | pst-extractor |
-| Virtualisierung | @tanstack/react-virtual |
-| ZIP-Export | fflate |
-
-## Architektur
-
-```
-Browser (Main Thread)          Web Worker
-┌─────────────────────┐       ┌──────────────────────┐
-│  React App          │       │  PST-Parsing         │
-│  - Ordnerbaum       │◄─────►│  - pst-extractor     │
-│  - E-Mail-Liste     │ Msgs  │  - Lazy Loading      │
-│  - Detail-Ansicht   │       │  - IndexedDB/OPFS    │
-│  - Suche            │       │  - EML-Builder       │
-│  - Export-Dialog    │       │  - ZIP (fflate)      │
-└─────────────────────┘       └──────────────────────┘
+```bash
+cp .env.example .env
+nano .env
 ```
 
-- **Web Worker**: Alle schwere Arbeit laeuft im Hintergrund-Thread — Main-Thread bleibt immer responsiv
-- **Lazy Loading**: Ordner-Metadaten erst beim Klick, Body erst bei Auswahl
-- **Paginierung**: Ordner mit 500+ Mails laden seitenweise (erste 50 sofort, Rest streamt nach)
-- **Virtualisierung**: Nur ~15 sichtbare DOM-Nodes, unabhaengig von der Mailanzahl
-- **OPFS-Cache**: Grosse Dateien einmalig in den Origin Private File System Cache kopiert
-
-### Suche & Indizierung
-
-Nach dem Oeffnen indiziert der Viewer alle Ordner automatisch im Hintergrund — **Posteingang und Gesendete Elemente zuerst**, dann nach Mailanzahl absteigend.
-Sobald ein Ordner indiziert ist, laeuft die Header-Suche darin ohne jede PST-I/O.
-Waehrend einer aktiven Suche pausiert die Indizierung vollstaendig und gibt alle Ressourcen frei.
-
-### Dateigroessen-Optimierung
-
-| Aspekt | Ohne Optimierung | Mit Optimierung |
-|---|---|---|
-| Buffer-Kopie | +Dateigroesse RAM | 0 (Zero-Copy) |
-| E-Mail-Bodies | alle im RAM | nur ausgewaehlte |
-| DOM-Nodes | alle Mails | ~15 sichtbare |
-| Main-Thread | blockiert | frei (Worker) |
-| emailCache RAM | unbegrenzt | max ~500 MB (adaptiv) |
-| Chunk-Cache (file://) | 32 MB fix | 64–512 MB adaptiv |
-
-### Adaptiver Chunk-Cache (file://-Modus)
-
-Im `file://`-Modus ohne OPFS liest der Viewer die PST-Datei ueber einen LRU-Chunk-Cache.
-Die Groesse passt sich automatisch an den verfuegbaren Arbeitsspeicher an (`navigator.deviceMemory`):
-
-| RAM | Chunk-Groesse | Cache-Budget |
-|---|---|---|
-| 1–2 GB | 4 MB | 64–128 MB |
-| 4 GB | 8 MB | 256 MB |
-| 8 GB+ | 8 MB | 512 MB |
-
-## EML-Export
-
-Suchergebnisse oder ganze Ordner koennen als EML-Dateien in einer ZIP-Datei exportiert werden:
-
-1. **Suchergebnisse**: Suche ausfuehren → **Exportieren** im Such-Header
-2. **Ordner**: Ordner auswaehlen → **Exportieren** im Ordner-Header
-3. Optionen: HTML-Inhalt / Textinhalt / Anhaenge einschliessen
-4. ZIP wird automatisch heruntergeladen
-
-Die EML-Dateien sind strikt RFC-konform (RFC 5322, 2047, 2231) und koennen in Thunderbird, Outlook, Apple Mail u.a. geoeffnet werden.
-Bei grossen Exporten (>=1000 Mails) erscheint eine Bestaetigung.
-
-## Browser-Kompatibilitaet
-
-| Browser | < 1 GB | > 1 GB |
-|---|---|---|
-| Chrome / Edge (http://) | OPFS | OPFS |
-| Firefox (http://) | OPFS | OPFS |
-| Safari | eingeschraenkt | begrenzt |
-| file:// (alle Browser) | Chunk-Cache | Chunk-Cache (langsamer) |
-
-## Tastenkuerzel
-
-| Kuerzel | Aktion |
-|---|---|
-| `Strg+O` | PST-Datei oeffnen |
-| `Strg+F` | Suche fokussieren |
-| `Strg+B` | Ordnerleiste ein-/ausblenden |
-| `Escape` | Suche / Dialog schliessen |
-| `F1` | Hilfe anzeigen |
-
-## Projektstruktur
-
-```
-pst-viewer/
-  src/
-    types.ts              # Shared Types (EmailMeta, FolderNode, Worker-Messages)
-    pstWorker.ts          # Web Worker: PST-Parsing, Indizierung, EML-Builder, ZIP-Export
-    usePSTWorker.ts       # React Hook: Worker-Lifecycle + State
-    VirtualEmailList.tsx  # Virtualisierte E-Mail-Liste
-    App.tsx               # Haupt-UI (MenuBar, FolderTree, ExportDialog, HelpDialog, InfoDialog)
-    main.tsx              # Entry Point
-    fs-shim.ts            # Leerer fs-Shim fuer pst-extractor im Browser
-    index.css             # Tailwind Import
-  vite.config.ts          # Vite Config mit Worker-Inline + Node-Polyfills
-  index.html              # HTML Template
-pst-viewer.html           # Build-Ausgabe (einzelne HTML-Datei, ~940 KB)
+```env
+PST_DIR=/chemin/vers/vos/fichiers/pst
+PST_PASSWORD=motdepasse_securise
+PORT=3000
 ```
 
-## Credits
+### Démarrage
 
-Entwickelt mit Unterstuetzung von [Claude Code](https://claude.ai/code) (Anthropic) und [Codex CLI](https://openai.com/codex) (OpenAI).
+```bash
+# Avec dotenv-cli
+npm install -g dotenv-cli
+dotenv -- node server.js
 
-Vollstaendige Bibliotheksliste mit Autoren und Lizenzen im Info-Dialog der Anwendung (Datei → Info).
+# Ou directement
+PST_DIR=/data/pst PST_PASSWORD=secret PORT=3000 node server.js
+```
 
-## Lizenz
+### Démarrage automatique (systemd)
 
-MIT — &copy; 2026 MEUSE24
+Voir [README-SERVER.md](README-SERVER.md) pour la configuration systemd et nginx.
+
+## Sécurité
+
+- Authentification HTTP Basic Auth (timing-safe)
+- Prévention de la traversée de répertoires (basename uniquement)
+- Recommandé : déployer derrière nginx avec HTTPS
+
+## Crédits
+
+Basé sur [pst-reader](https://github.com/meuse24/pst-reader) de [meuse24](https://github.com/meuse24).
