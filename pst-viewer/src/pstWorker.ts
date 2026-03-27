@@ -1661,17 +1661,42 @@ self.onmessage = async (e: MessageEvent<WorkerCommand>) => {
           return
         }
 
+        // URL mode: check IDB body cache first — avoids HTTP range requests on subsequent reads
+        if (currentSlot) {
+          const idbBodyKey = `${currentSlot}/body/${cmd.folderPath}:${cmd.index}`
+          try {
+            const cached = await idbCacheGet<{ body: string; bodyHTML: string }>(idbBodyKey)
+            if (cached) {
+              post({
+                type: 'EMAIL_BODY',
+                folderPath: cmd.folderPath,
+                index: cmd.index,
+                body: cached.body,
+                bodyHTML: cached.bodyHTML,
+              })
+              break
+            }
+          } catch { /* non-critical — fall through to PST read */ }
+        }
+
         try {
           folder.moveChildCursorTo(cmd.index)
           const email = folder.getNextChild()
           if (email) {
+            const body = email.body || ''
+            const bodyHTML = email.bodyHTML || ''
             post({
               type: 'EMAIL_BODY',
               folderPath: cmd.folderPath,
               index: cmd.index,
-              body: email.body || '',
-              bodyHTML: email.bodyHTML || '',
+              body,
+              bodyHTML,
             })
+            // Persist body in IDB so next open is instant (fire-and-forget)
+            if (currentSlot) {
+              const idbBodyKey = `${currentSlot}/body/${cmd.folderPath}:${cmd.index}`
+              idbCachePut(idbBodyKey, { body, bodyHTML }).catch(() => {})
+            }
           } else {
             post({ type: 'ERROR', message: 'E-Mail nicht gefunden' })
           }
