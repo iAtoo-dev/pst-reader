@@ -371,25 +371,21 @@ export function useMultiPSTWorker(authHeader?: string): PSTWorkerState & PSTWork
             }
 
             case 'EMAIL_BODY': {
-              // Find canonical path + merged index for this body
-              // We stored the canonical path in _op on the tagged email; look it up via
-              // the canonical folder path by scanning all folders for workerIndex+originalPath
+              // Use folderEmailsRef.current (always up-to-date) instead of the stale
+              // folderEmails closure captured at handler-creation time.
               let canonPath: string | null = null
               let mergedIndex = -1
-              for (const [canon, emails] of folderEmails) {
+              for (const [canon, emails] of folderEmailsRef.current) {
                 const tagged = emails as TaggedEmail[]
                 const found = tagged.find(e => e._w === workerIndex && e._oi === msg.index && e._op === msg.folderPath)
                 if (found) { canonPath = canon; mergedIndex = found.index; break }
               }
-              // folderEmails might not be the current state here due to closure — use ref workaround:
-              // We'll store body using original routing key and remap on access.
-              // Simpler: just cache by a combined key: workerIndex+originalPath+originalIndex
-              const cacheKey = `${workerIndex}\0${msg.folderPath}\0${msg.index}`
               const entry = { body: msg.body, bodyHTML: msg.bodyHTML }
-              bodyCacheRef.current.set(cacheKey, entry)
+              // Always store under raw key (fallback)
+              bodyCacheRef.current.set(`${workerIndex}\0${msg.folderPath}\0${msg.index}`, entry)
+              // Store under canonical key so App.tsx bodyKey() lookup succeeds
               if (canonPath !== null && mergedIndex >= 0) {
-                const canonKey = bodyKey(canonPath, mergedIndex)
-                bodyCacheRef.current.set(canonKey, entry)
+                bodyCacheRef.current.set(bodyKey(canonPath, mergedIndex), entry)
               }
               setBodyCache(new Map(bodyCacheRef.current))
               break
