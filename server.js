@@ -593,9 +593,12 @@ app.get('/', (req, res) => {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
+const HOST = process.env.HOST || '0.0.0.0'
+
+app.listen(PORT, HOST, () => {
   console.log(`\nPST Archive Server`)
-  console.log(`  URL:          http://localhost:${PORT}`)
+  console.log(`  URL:          http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`)
+  console.log(`  Listen:       ${HOST}:${PORT}`)
   console.log(`  PST files:    ${PST_DIR}`)
   console.log(`  Frontend:     ${FRONTEND}`)
   console.log(`  Auth:         ${PASSWORD ? 'enabled (Basic Auth)' : 'disabled'}`)
