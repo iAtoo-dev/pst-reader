@@ -1430,11 +1430,32 @@ function App() {
               </div>
               <div className="flex-1 relative bg-white min-h-0">
                 {selectedBody ? (() => {
-                  const htmlSrc = selectedBody.bodyHTML
-                    || (/<[a-zA-Z][\s\S]*>/.test(selectedBody.body) ? selectedBody.body : '')
-                  return htmlSrc ? (
+                  // Detect HTML: require at least one closing tag (</tag>), not just any <bracket>
+                  // This avoids false positives with email addresses like <user@domain.com>
+                  const bodyIsHtml = /<\/[a-zA-Z]/.test(selectedBody.body)
+                  const rawHtml = selectedBody.bodyHTML || (bodyIsHtml ? selectedBody.body : '')
+
+                  // Clean RTF artifacts that leak into extracted HTML/text bodies:
+                  // - HYPERLINK "url" displayText   (RTF field code)
+                  // - INCLUDEPICTURE "url" MERGEFORMAT ... (RTF field code)
+                  // - \u00AD soft hyphens displayed as ~
+                  // - \uFEFF BOM characters
+                  // Also inject <meta charset="utf-8"> when missing to fix accented chars
+                  const cleanHtml = rawHtml
+                    ? (() => {
+                        const hasMeta = /<meta[^>]+charset/i.test(rawHtml)
+                        const base = rawHtml
+                          .replace(/\bHYPERLINK\s+"[^"]*"\s*/g, '')
+                          .replace(/\bINCLUDEPICTURE\s+"[^"]*"[^\n<]*/g, '')
+                          .replace(/\bMERGEFORMAT\b/g, '')
+                          .replace(/\ufeff/g, '')
+                          .replace(/\u00ad/g, '')
+                        return hasMeta ? base : `<meta charset="utf-8">` + base
+                      })()
+                    : ''
+                  return cleanHtml ? (
                     <iframe
-                      srcDoc={htmlSrc}
+                      srcDoc={cleanHtml}
                       className="absolute inset-0 w-full h-full border-0"
                       sandbox="allow-same-origin"
                       title="Email content"
