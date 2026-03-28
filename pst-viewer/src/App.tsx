@@ -947,6 +947,18 @@ function AppInner() {
   const [sortField, setSortField] = useState<SortField>('date')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
 
+  // Mobile responsive: one panel visible at a time on small screens
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
+  const isMobileRef = useRef(isMobile)
+  isMobileRef.current = isMobile
+  const [mobilePanel, setMobilePanel] = useState<'folders' | 'list' | 'detail'>('list')
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)')
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+
   const debouncedQuery = useDebounce(searchQuery, 200)
   const isSearching = debouncedQuery.trim().length > 0
   const abortSearch = pst.abortSearch
@@ -1071,6 +1083,7 @@ function AppInner() {
     setSelectedEmail(null)
     setSearchQuery('')
     pst.fetchFolder(folder.path)
+    if (isMobileRef.current) setMobilePanel('list')
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -1095,6 +1108,7 @@ function AppInner() {
 
   const handleEmailSelect = useCallback((email: EmailMeta) => {
     setSelectedEmail(email)
+    if (isMobileRef.current) setMobilePanel('detail')
   }, [])
 
   // Keyboard shortcuts
@@ -1246,10 +1260,19 @@ function AppInner() {
       <div className="flex flex-1 min-h-0">
         {/* Sidebar */}
         <div
-          style={{ width: sidebarVisible ? sidebarWidth : 0 }}
-          className="flex-shrink-0 bg-white border-r border-gray-200 flex flex-col overflow-hidden transition-[width] duration-200 ease-in-out"
+          style={isMobile ? undefined : { width: sidebarVisible ? sidebarWidth : 0 }}
+          className={isMobile
+            ? mobilePanel === 'folders' ? 'flex flex-col flex-1 bg-white overflow-hidden' : 'hidden'
+            : 'flex-shrink-0 bg-white border-r border-gray-200 flex flex-col overflow-hidden transition-[width] duration-200 ease-in-out'
+          }
         >
-          <div className="flex-1 overflow-y-auto py-1" style={{ width: sidebarWidth }}>
+          {isMobile && (
+            <div className="flex items-center gap-2 px-3 py-2.5 border-b border-gray-200 bg-gray-50">
+              <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7h18M3 12h18M3 17h18"/></svg>
+              <span className="font-semibold text-sm text-gray-700">Dossiers</span>
+            </div>
+          )}
+          <div className="flex-1 overflow-y-auto py-1" style={isMobile ? undefined : { width: sidebarWidth }}>
             <FolderTreeItem
               folder={pst.tree}
               selectedPath={selectedFolderPath || ''}
@@ -1257,10 +1280,25 @@ function AppInner() {
             />
           </div>
         </div>
-        {sidebarVisible && <ResizeHandle onDrag={d => setSidebarWidth(w => clamp(w + d, MIN_SIDEBAR, MAX_SIDEBAR))} />}
+        {!isMobile && sidebarVisible && <ResizeHandle onDrag={d => setSidebarWidth(w => clamp(w + d, MIN_SIDEBAR, MAX_SIDEBAR))} />}
 
         {/* Email List */}
-        <div style={{ width: listWidth }} className="flex-shrink-0 bg-white border-r border-gray-200 flex flex-col">
+        <div
+          style={isMobile ? undefined : { width: listWidth }}
+          className={isMobile
+            ? mobilePanel === 'list' ? 'flex flex-col flex-1 bg-white overflow-hidden' : 'hidden'
+            : 'flex-shrink-0 bg-white border-r border-gray-200 flex flex-col'
+          }
+        >
+          {isMobile && (
+            <button
+              onClick={() => setMobilePanel('folders')}
+              className="flex items-center gap-1.5 px-3 py-2 border-b border-gray-200 bg-gray-50 text-sm text-blue-600 hover:bg-gray-100 active:bg-gray-200 transition-colors text-left"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7"/></svg>
+              Dossiers
+            </button>
+          )}
           {/* Search Bar */}
           <div className="p-2 border-b border-gray-200">
             <div className="relative">
@@ -1408,13 +1446,25 @@ function AppInner() {
           />
         </div>
 
-        <ResizeHandle onDrag={d => setListWidth(w => clamp(w + d, MIN_LIST, MAX_LIST))} />
+        {!isMobile && <ResizeHandle onDrag={d => setListWidth(w => clamp(w + d, MIN_LIST, MAX_LIST))} />}
 
         {/* Email Detail */}
-        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+        <div className={isMobile
+          ? mobilePanel === 'detail' ? 'flex flex-col flex-1 overflow-hidden' : 'hidden'
+          : 'flex-1 min-w-0 flex flex-col overflow-hidden'
+        }>
           {selectedEmail ? (
             <>
               <div className="p-4 border-b border-gray-200 bg-white">
+                {isMobile && (
+                  <button
+                    onClick={() => setMobilePanel('list')}
+                    className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 mb-3 -ml-1 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7"/></svg>
+                    Messages
+                  </button>
+                )}
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <h2 className="text-lg font-semibold text-gray-900">
                     {selectedEmail.subject}
