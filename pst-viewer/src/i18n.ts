@@ -496,7 +496,7 @@ const fr: Strings = {
   openFile: 'Ouvrir un fichier PST',
   dropHint: 'ou glisser-déposer ici',
   privacyHint: 'Toutes les données sont traitées localement dans votre navigateur.',
-  searchPlaceholderIn: 'Rechercher dans « {name} » ({ctrl}+F)',
+  searchPlaceholderIn: 'Rechercher dans « {name} » — termes multiples séparés par | ({ctrl}+F)',
   searchPlaceholderSelect: 'Sélectionnez un dossier pour rechercher ({ctrl}+F)',
   searchIncludeBody: 'Rechercher aussi dans le contenu',
   hitsLabel: 'résultats',

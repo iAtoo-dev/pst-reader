@@ -18,12 +18,18 @@ function ImportanceBadge({ importance }: { importance: number }) {
   return null
 }
 
+// Split a raw query on | and return individual trimmed terms (non-empty)
+function parseTerms(query: string): string[] {
+  return query.split('|').map(t => t.trim()).filter(t => t.length > 0)
+}
+
 function HighlightText({ text, query }: { text: string; query: string }) {
   if (!query.trim()) return <>{text}</>
-  // Highlight the exact phrase (not individual words) so "mot de passe" doesn't
-  // produce false highlights on every occurrence of "de"
-  const escaped = query.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const re = new RegExp(`(${escaped})`, 'gi')
+  // Support pipe-separated multi-term search: "mot de passe | orange | foo@bar.com"
+  // Each term is highlighted as an exact phrase (avoids partial-word false positives)
+  const terms = parseTerms(query)
+  const escaped = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  const re = new RegExp(`(${escaped.join('|')})`, 'gi')
   const parts = text.split(re)
   return (
     <>
@@ -92,7 +98,8 @@ function getItemTypeBadge(type: string): { emoji: string; label: string; cls: st
 
 function getSnippet(bodySnippet: string, query: string, radius = 60): string {
   const lower = bodySnippet.toLowerCase()
-  const terms = query.trim().toLowerCase().split(/\s+/)
+  // Each | term is searched as an exact phrase
+  const terms = parseTerms(query).map(t => t.toLowerCase())
   let bestIdx = -1
   for (const term of terms) {
     const idx = lower.indexOf(term)

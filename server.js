@@ -329,13 +329,20 @@ app.get('/api/search', (req, res) => {
   const offset = parseInt(req.query.offset || '0', 10)
 
   try {
-    const ftsQuery = `"${q.replace(/"/g, '""')}"`
-    let results, total
+    // Support pipe-separated multi-term AND search: "mot de passe | orange | foo@bar.com"
+    // All terms must be present (AND logic). Single term = classic exact-phrase search.
+    const terms = q.split('|').map(t => t.trim()).filter(t => t.length > 0)
 
-    // LIKE phrase filter — guarantees the exact phrase appears in at least one field
-    const likeQ = `%${q}%`
-    const likeFilter = `(e.subject LIKE ? OR e.body_text LIKE ? OR e.sender_name LIKE ? OR e.recipients LIKE ?)`
-    const likeParams = [likeQ, likeQ, likeQ, likeQ]
+    // FTS5: each term as exact phrase, all must match (AND)
+    const ftsQuery = terms.map(t => `"${t.replace(/"/g, '""')}"`).join(' AND ')
+
+    // LIKE: for each term, it must appear in at least one field (AND between terms)
+    const likeFilter = terms
+      .map(() => `(e.subject LIKE ? OR e.body_text LIKE ? OR e.sender_name LIKE ? OR e.recipients LIKE ?)`)
+      .join(' AND ')
+    const likeParams = terms.flatMap(t => { const l = `%${t}%`; return [l, l, l, l] })
+
+    let results, total
 
     try {
       // FTS5 pre-filters quickly by individual tokens (all must be present),
