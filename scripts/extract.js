@@ -13,6 +13,7 @@ import { createRequire } from 'module'
 import { readdirSync, statSync } from 'fs'
 import { join, basename, resolve } from 'path'
 import { fileURLToPath } from 'url'
+import { deEncapsulateSync } from 'rtf-stream-parser'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
@@ -30,6 +31,12 @@ const {
   PSTContact,
 } = requireViewer('pst-extractor')
 const { PSTUtil } = requireViewer('pst-extractor/dist/PSTUtil.class')
+
+// iconv-lite decoder passed to rtf-stream-parser for Windows codepage support
+const iconv = requireRoot('iconv-lite')
+const rtfDecode = (buf, codepage) => {
+  try { return iconv.decode(buf, `cp${codepage}`) } catch { return buf.toString('latin1') }
+}
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -202,22 +209,50 @@ function stripRtf(rtf) {
   return text.trim()
 }
 
-// ── Body extraction with RTF fallback ─────────────────────────────────────────
-// Priority: HTML (richest) → plain text → RTF stripped → empty
+// ── Body extraction ────────────────────────────────────────────────────────────
+// Priority:
+//   1. msg.bodyHTML        → body_html  (native HTML property)
+//   2. msg.bodyRTF         → deEncapsulateSync (Outlook RTFHTML → HTML or text)
+//   3. msg.body            → body_text  (plain text fallback)
+//   4. stripRtf(bodyRTF)   → body_text  (last resort: raw RTF strip)
 
 function extractBodies(msg) {
   let body_html = ''
   let body_text = ''
 
+  // 1. Native HTML body
   try { body_html = msg.bodyHTML || '' } catch { /* skip */ }
-  try { body_text = msg.body      || '' } catch { /* skip */ }
+  if (body_html) return { body_html, body_text }
 
-  // If neither HTML nor plain text, try RTF compressed body
-  if (!body_html && !body_text) {
+  // 2. RTF body — deEncapsulate: recovers original HTML when Outlook wrapped
+  //    HTML inside RTF (RTFHTML encapsulation), or returns clean plain text
+  let rawRtf = ''
+  try { rawRtf = msg.bodyRTF || '' } catch { /* skip */ }
+
+  if (rawRtf) {
     try {
-      const rtf = msg.bodyRTF || ''
-      if (rtf) body_text = stripRtf(rtf)
-    } catch { /* skip */ }
+      const result = deEncapsulateSync(rawRtf, {
+        mode: 'either',
+        outlookQuirksMode: true,
+        decode: rtfDecode,
+      })
+      const txt = typeof result.text === 'string' ? result.text : result.text.toString('utf8')
+      if (result.mode === 'html') {
+        body_html = txt
+      } else {
+        body_text = txt
+      }
+      if (body_html || body_text) return { body_html, body_text }
+    } catch { /* not encapsulated — fall through */ }
+  }
+
+  // 3. Plain text body
+  try { body_text = msg.body || '' } catch { /* skip */ }
+  if (body_text) return { body_html, body_text }
+
+  // 4. Last resort: strip raw RTF markup
+  if (rawRtf) {
+    try { body_text = stripRtf(rawRtf) } catch { /* skip */ }
   }
 
   return { body_html, body_text }
