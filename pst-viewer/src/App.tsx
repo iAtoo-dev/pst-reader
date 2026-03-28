@@ -1,9 +1,165 @@
-import { Component, useState, useCallback, useMemo, useRef, useEffect } from 'react'
+import { Component, useState, useCallback, useMemo, useRef, useEffect, FormEvent } from 'react'
 import type { ReactNode, ErrorInfo } from 'react'
 import { useSQLiteAPI as usePSTWorker, bodyKey } from './useSQLiteAPI.ts'
 import { VirtualEmailList } from './VirtualEmailList.tsx'
 import type { FolderNode, EmailMeta, ExportOptions } from './types.ts'
 import { t, tr, currentLocale } from './i18n.ts'
+
+// ─── Auth ────────────────────────────────────────────────────────────────────
+
+const AUTH_KEY = 'pst-auth-v1'
+function checkAuth(): boolean { return sessionStorage.getItem(AUTH_KEY) === '1' }
+
+function LoginPage({ onAuth }: { onAuth: () => void }) {
+  const [user, setUser]   = useState('')
+  const [pass, setPass]   = useState('')
+  const [error, setError] = useState(false)
+  const [shake, setShake] = useState(false)
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    if (user === 'secret' && pass === 'secret') {
+      sessionStorage.setItem(AUTH_KEY, '1')
+      onAuth()
+    } else {
+      setError(true)
+      setShake(true)
+      setTimeout(() => setShake(false), 500)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm">
+        {/* Branding */}
+        <div className="text-center mb-8">
+          <div className="text-xs font-semibold tracking-[0.3em] uppercase text-blue-400/70 mb-2">iAtoo</div>
+          <h1 className="text-4xl font-black tracking-tight text-white mb-1">
+            PST <span className="text-blue-400">Archive</span>
+          </h1>
+          <p className="text-blue-300/70 text-sm font-medium">Groupe Interaction</p>
+        </div>
+
+        {/* Card */}
+        <form
+          onSubmit={submit}
+          className={`bg-white/5 backdrop-blur border border-white/10 rounded-2xl p-8 shadow-2xl transition-transform ${shake ? 'animate-[shake_0.4s_ease-in-out]' : ''}`}
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-blue-300/80 uppercase tracking-wider mb-1.5">
+                Identifiant
+              </label>
+              <input
+                type="text"
+                value={user}
+                onChange={e => { setUser(e.target.value); setError(false) }}
+                autoComplete="username"
+                autoFocus
+                className="w-full bg-white/10 border border-white/15 rounded-lg px-4 py-2.5 text-white placeholder-white/30 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                placeholder="Identifiant"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-blue-300/80 uppercase tracking-wider mb-1.5">
+                Mot de passe
+              </label>
+              <input
+                type="password"
+                value={pass}
+                onChange={e => { setPass(e.target.value); setError(false) }}
+                autoComplete="current-password"
+                className="w-full bg-white/10 border border-white/15 rounded-lg px-4 py-2.5 text-white placeholder-white/30 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                placeholder="••••••••"
+              />
+            </div>
+          </div>
+
+          {error && (
+            <p className="mt-3 text-xs text-red-400 text-center">
+              Identifiant ou mot de passe incorrect
+            </p>
+          )}
+
+          <button
+            type="submit"
+            className="mt-6 w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 rounded-lg transition-all duration-150 shadow-lg shadow-blue-900/50 active:scale-95 text-sm tracking-wide"
+          >
+            Se connecter
+          </button>
+        </form>
+
+        <p className="text-center text-white/20 text-xs mt-6">
+          Accès restreint — usage interne
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// ─── Folder icons ─────────────────────────────────────────────────────────────
+
+function getFolderIcon(name: string, path: string): ReactNode {
+  const n = name.toLowerCase()
+  const p = path.toLowerCase()
+
+  const icon = (d: string, color = 'text-blue-400') => (
+    <svg viewBox="0 0 16 16" fill="currentColor" className={`w-3.5 h-3.5 flex-shrink-0 ${color}`}>
+      <path d={d} />
+    </svg>
+  )
+
+  // Inbox
+  if (/bo[îi]te de r[ée]ception|inbox|eingang/.test(n))
+    return icon('M14 2H2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1zm-1 10H3V9h2.5l1.5 2h2l1.5-2H13v3zm0-5h-2.8l-1.5 2H9.3l-1.5-2H5V4h8v3z', 'text-blue-400')
+
+  // Sent
+  if (/[ée]l[ée]ments envoy[ée]s|envoy[ée]|sent|gesendete/.test(n))
+    return icon('M1.5 1.5l13 6.5-13 6.5V9.5l9-2.5-9-2.5V1.5z', 'text-green-400')
+
+  // Drafts
+  if (/brouillon|draft|entwurf/.test(n))
+    return icon('M12 2H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1zM5 5h6v1H5V5zm0 2h6v1H5V7zm0 2h4v1H5V9zm7 4l-1.5-1.5L12 10l1.5 1.5L12 13z', 'text-yellow-400')
+
+  // Deleted / Trash
+  if (/supprim[ée]|[ée]l[ée]ments supprim[ée]s|trash|deleted|gel[öo]scht/.test(n))
+    return icon('M6 2h4l1 1h3v2H2V3h3L6 2zM3 6h10l-1 8H4L3 6zm3 2v4h1V8H6zm3 0v4h1V8H9z', 'text-red-400')
+
+  // Spam / Junk
+  if (/spam|courrier ind[ée]sirable|junk|unerwünscht/.test(n))
+    return icon('M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm-.75 3.5h1.5l-.25 5h-1l-.25-5zm.75 7a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5z', 'text-orange-400')
+
+  // Calendar
+  if (/calendrier|calendar|kalender/.test(n))
+    return icon('M4 1v1H2a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1h-2V1h-1.5v1h-5V1H4zm-1 4h10v8H3V5zm2 2v1.5h1.5V7H5zm3 0v1.5h1.5V7H8zm3 0v1.5h1.5V7H11zm-6 3v1.5h1.5V10H5zm3 0v1.5h1.5V10H8z', 'text-purple-400')
+
+  // Contacts
+  if (/contact|adresse|person/.test(n))
+    return icon('M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm-5 6a5 5 0 0 1 10 0H3z', 'text-teal-400')
+
+  // Notes
+  if (/notes?|notiz/.test(n))
+    return icon('M3 2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h7l3-3V3a1 1 0 0 0-1-1H3zm1 3h8v1H4V5zm0 2h8v1H4V7zm0 2h5v1H4V9zm7 3v2l2-2h-2z', 'text-amber-400')
+
+  // Tasks
+  if (/t[âa]che|task|aufgabe/.test(n))
+    return icon('M13 2H3a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1zm-2 4.5l-4 4-2-2 1-1 1 1 3-3 1 1z', 'text-emerald-400')
+
+  // RSS
+  if (/rss|flux/.test(n))
+    return icon('M3 3v2a8 8 0 0 1 8 8h2A10 10 0 0 0 3 3zm0 4v2a4 4 0 0 1 4 4h2A6 6 0 0 0 3 7zm1.5 4.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z', 'text-orange-300')
+
+  // Archive
+  if (/archiv/.test(n))
+    return icon('M2 2h12v3H2V2zm1 4h10l-1 8H4L3 6zm3 2v1h4V8H6z', 'text-slate-400')
+
+  // Root / Mailbox
+  if (/mailbox|bo[îi]te|^mailbox$/.test(p) && path.split('/').length <= 2)
+    return icon('M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm3 5H5l3 3 3-3zm-6 5V7.5l3 3 3-3V11H5z', 'text-blue-300')
+
+  // Default folder
+  return icon('M1.5 3A1.5 1.5 0 0 1 3 1.5h3.586a1.5 1.5 0 0 1 1.06.44L9 3.44V3h4.5A1.5 1.5 0 0 1 15 4.5v8A1.5 1.5 0 0 1 13.5 14h-11A1.5 1.5 0 0 1 1 12.5V3z', 'text-slate-400')
+}
 
 // ─── Error Boundary ──────────────────────────────────────────────────────────
 
@@ -159,14 +315,18 @@ function FolderTreeItem({
       >
         {hasChildren ? (
           <button
-            className="w-4 h-4 flex items-center justify-center text-gray-400 hover:text-gray-700 flex-shrink-0"
+            className="w-3.5 h-3.5 flex items-center justify-center text-gray-400 hover:text-gray-600 flex-shrink-0 transition-transform duration-150"
+            style={{ transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
             onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
           >
-            {expanded ? '\u25BC' : '\u25B6'}
+            <svg viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3">
+              <path d="M6 4l4 4-4 4V4z"/>
+            </svg>
           </button>
         ) : (
-          <span className="w-4 flex-shrink-0" />
+          <span className="w-3.5 flex-shrink-0" />
         )}
+        {getFolderIcon(folder.name, folder.path)}
         <span className="truncate">{folder.name}</span>
         {folder.emailCount > 0 && (
           <span className="text-xs text-gray-400 ml-auto flex-shrink-0">{folder.emailCount}</span>
@@ -759,6 +919,13 @@ function MenuBar({
 // ─── Main App ────────────────────────────────────────────────────────────────
 
 function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(checkAuth)
+  if (!isAuthenticated) return <LoginPage onAuth={() => setIsAuthenticated(true)} />
+
+  return <AppInner />
+}
+
+function AppInner() {
   const pst = usePSTWorker()
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null)
   const [selectedEmail, setSelectedEmail] = useState<EmailMeta | null>(null)
