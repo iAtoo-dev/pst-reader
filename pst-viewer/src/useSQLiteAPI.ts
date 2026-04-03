@@ -220,7 +220,7 @@ export function useSQLiteAPI(authHeader?: string): PSTWorkerState & PSTWorkerAct
 
   // ── search ─────────────────────────────────────────────────────────────────
 
-  const search = useCallback(async (query: string, canonPath: string, _includeBody?: boolean) => {
+  const search = useCallback(async (query: string, canonPath: string, _includeBody?: boolean, dateFrom?: string, dateTo?: string) => {
     const trimmed = query.trim()
     if (!trimmed || !canonPath) {
       setSearching(false)
@@ -242,7 +242,10 @@ export function useSQLiteAPI(authHeader?: string): PSTWorkerState & PSTWorkerAct
 
     try {
       const headers = getAuthHeaders(authHeaderRef.current)
-      const url = `/api/search?q=${encodeURIComponent(trimmed)}&folder_path=${encodeURIComponent(canonPath)}&limit=500`
+      const params = new URLSearchParams({ q: trimmed, folder_path: canonPath })
+      if (dateFrom) params.set('date_from', dateFrom)
+      if (dateTo)   params.set('date_to', dateTo)
+      const url = `/api/search?${params}`
       const res = await fetch(url, { headers })
       if (!res.ok) throw new Error(`Server error ${res.status}`)
       const data = await res.json() as { results: Record<string, unknown>[]; total: number }

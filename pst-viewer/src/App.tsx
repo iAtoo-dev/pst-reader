@@ -933,6 +933,8 @@ function AppInner() {
   const searchQueryRef = useRef(searchQuery)
   searchQueryRef.current = searchQuery
   const [searchIncludeBody, setSearchIncludeBody] = useState(true)
+  const [searchDateFrom, setSearchDateFrom] = useState('')
+  const [searchDateTo,   setSearchDateTo]   = useState('')
   const searchInputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const loadingRef = useRef(pst.loading)
@@ -1007,9 +1009,9 @@ function AppInner() {
       abortSearch()
       return
     }
-    pst.search(debouncedQuery, selectedFolderPath, searchIncludeBody)
+    pst.search(debouncedQuery, selectedFolderPath, searchIncludeBody, searchDateFrom || undefined, searchDateTo || undefined)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedQuery, selectedFolderPath, searchIncludeBody])
+  }, [debouncedQuery, selectedFolderPath, searchIncludeBody, searchDateFrom, searchDateTo])
 
   // Get emails for current view
   const folderEmailList = selectedFolderPath ? pst.folderEmails.get(selectedFolderPath) : undefined
@@ -1333,6 +1335,31 @@ function AppInner() {
               />
               {t('searchIncludeBody')}
             </label>
+            <div className="flex items-center gap-1 mt-1.5 text-xs text-gray-500">
+              <svg className="w-3 h-3 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+              <input
+                type="date"
+                value={searchDateFrom}
+                onChange={(e) => setSearchDateFrom(e.target.value)}
+                className="border border-gray-200 rounded px-1 py-0.5 text-xs bg-gray-50 focus:outline-none focus:ring-1 focus:ring-blue-400 w-[115px]"
+                title="Date de début"
+              />
+              <span className="text-gray-400">→</span>
+              <input
+                type="date"
+                value={searchDateTo}
+                onChange={(e) => setSearchDateTo(e.target.value)}
+                className="border border-gray-200 rounded px-1 py-0.5 text-xs bg-gray-50 focus:outline-none focus:ring-1 focus:ring-blue-400 w-[115px]"
+                title="Date de fin"
+              />
+              {(searchDateFrom || searchDateTo) && (
+                <button
+                  onClick={() => { setSearchDateFrom(''); setSearchDateTo('') }}
+                  className="text-gray-400 hover:text-gray-600 ml-0.5"
+                  title="Effacer les dates"
+                >&#10005;</button>
+              )}
+            </div>
           </div>
 
           {/* Header */}

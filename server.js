@@ -325,8 +325,10 @@ app.get('/api/search', (req, res) => {
   if (!q) return res.status(400).json({ error: 'q parameter required' })
 
   const folderPath = req.query.folder_path || null
-  const limit  = Math.min(parseInt(req.query.limit  || '200', 10), 2000)
-  const offset = parseInt(req.query.offset || '0', 10)
+  const dateFrom   = req.query.date_from   || null   // e.g. "2023-01-01"
+  const dateTo     = req.query.date_to     || null   // e.g. "2023-12-31"
+  const limit      = Math.min(parseInt(req.query.limit || '50000', 10), 50000)
+  const offset     = parseInt(req.query.offset || '0', 10)
 
   try {
     // Support pipe-separated multi-term AND search: "mot de passe | orange | foo@bar.com"
@@ -342,6 +344,21 @@ app.get('/api/search', (req, res) => {
       .join(' AND ')
     const likeParams = terms.flatMap(t => { const l = `%${t}%`; return [l, l, l, l] })
 
+    // Date range filter (ISO string comparison works for ISO datetimes)
+    const dateFilter = [
+      dateFrom ? `e.date_sent >= ?` : '',
+      dateTo   ? `e.date_sent <= ?` : '',
+    ].filter(Boolean).join(' AND ')
+    const dateParams = [
+      ...(dateFrom ? [dateFrom] : []),
+      ...(dateTo   ? [`${dateTo}T23:59:59.999Z`] : []),
+    ]
+
+    const whereExtra = [
+      folderPath ? 'AND f.canonical_path = ?' : '',
+      dateFilter ? `AND ${dateFilter}` : '',
+    ].filter(Boolean).join(' ')
+
     let results, total
 
     try {
@@ -356,8 +373,8 @@ app.get('/api/search', (req, res) => {
         JOIN folders f ON f.id = e.folder_id
         WHERE emails_fts MATCH ?
           AND ${likeFilter}
-        ${folderPath ? 'AND f.canonical_path = ?' : ''}
-        ORDER BY rank
+          ${whereExtra}
+        ORDER BY e.date_sent DESC
         LIMIT ? OFFSET ?
       `
       const countSql = `
@@ -367,15 +384,12 @@ app.get('/api/search', (req, res) => {
         JOIN folders f ON f.id = e.folder_id
         WHERE emails_fts MATCH ?
           AND ${likeFilter}
-        ${folderPath ? 'AND f.canonical_path = ?' : ''}
+          ${whereExtra}
       `
 
-      const params = folderPath
-        ? [ftsQuery, ...likeParams, folderPath, limit, offset]
-        : [ftsQuery, ...likeParams, limit, offset]
-      const countParams = folderPath
-        ? [ftsQuery, ...likeParams, folderPath]
-        : [ftsQuery, ...likeParams]
+      const extraParams = [...(folderPath ? [folderPath] : []), ...dateParams]
+      const params      = [ftsQuery, ...likeParams, ...extraParams, limit, offset]
+      const countParams = [ftsQuery, ...likeParams, ...extraParams]
 
       results = db.prepare(baseSql).all(...params)
       total   = db.prepare(countSql).get(...countParams).n
@@ -388,8 +402,8 @@ app.get('/api/search', (req, res) => {
         FROM emails e
         JOIN folders f ON f.id = e.folder_id
         WHERE ${likeFilter}
-        ${folderPath ? 'AND f.canonical_path = ?' : ''}
-        ORDER BY e.date_sent DESC NULLS LAST
+          ${whereExtra}
+        ORDER BY e.date_sent DESC
         LIMIT ? OFFSET ?
       `
       const countSql = `
@@ -397,14 +411,11 @@ app.get('/api/search', (req, res) => {
         FROM emails e
         JOIN folders f ON f.id = e.folder_id
         WHERE ${likeFilter}
-        ${folderPath ? 'AND f.canonical_path = ?' : ''}
+          ${whereExtra}
       `
-      const params = folderPath
-        ? [...likeParams, folderPath, limit, offset]
-        : [...likeParams, limit, offset]
-      const countParams = folderPath
-        ? [...likeParams, folderPath]
-        : [...likeParams]
+      const extraParams = [...(folderPath ? [folderPath] : []), ...dateParams]
+      const params      = [...likeParams, ...extraParams, limit, offset]
+      const countParams = [...likeParams, ...extraParams]
 
       results = db.prepare(baseSql).all(...params)
       total   = db.prepare(countSql).get(...countParams).n

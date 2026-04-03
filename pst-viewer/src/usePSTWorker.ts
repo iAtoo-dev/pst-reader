@@ -28,7 +28,7 @@ export interface PSTWorkerActions {
   loadFile: (file: File) => void
   fetchFolder: (path: string) => void
   fetchBody: (folderPath: string, index: number) => void
-  search: (query: string, folderPath: string, includeBody?: boolean) => void
+  search: (query: string, folderPath: string, includeBody?: boolean, dateFrom?: string, dateTo?: string) => void
   abortSearch: () => void
   closeFile: () => void
   clearError: () => void
